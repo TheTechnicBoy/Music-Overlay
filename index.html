@@ -4,66 +4,174 @@
   <meta charset="UTF-8">
   <title>OBS Music Overlay</title>
   <style>
-    /* Transparenter Hintergrund für OBS */
-    body {
+    html, body {
       margin: 0;
+      padding: 0;
       background: transparent;
+      overflow: hidden;
+      font-family: sans-serif;
+      color: white;
+    }
+    /* Container für Song-Infos oben links */
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 5px;
+    }
+    #info img {
+      width: 60px;
+      height: 60px;
+      margin-right: 10px;
+      border-radius: 50%;
+      /* Animation: Rotieren wie eine Schallplatte */
+      animation: spin 5s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    #info .text {
+      display: flex;
+      flex-direction: column;
+    }
+    #info .text span {
+      line-height: 1.2;
+    }
+    /* Container für den Verbindungsstatus unten rechts */
+    #status {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-size: 0.9em;
+    }
+    #status .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+      background: red; /* Standard: rot, d.h. nicht verbunden */
     }
   </style>
 </head>
 <body>
-  <!-- Das Audio-Element wird im Hintergrund verwendet -->
+  <!-- Container für die Songinformationen -->
+  <div id="info">
+    <img id="album-cover" src="" alt="Album Cover" style="display: none;">
+    <div class="text">
+      <span id="song-name">-</span>
+      <span id="singer-name">-</span>
+    </div>
+  </div>
+
+  <!-- Audio-Element -->
   <audio id="overlay-audio" preload="auto"></audio>
 
+  <!-- Verbindungsstatus unten rechts -->
+  <div id="status">
+    <div class="dot" id="status-dot"></div>
+    <span id="status-text">Reconnecting...</span>
+  </div>
+
   <script>
-    const ws = new WebSocket('ws://localhost:8080');
+    let ws;
+    let reconnectInterval = 1000; // Versuche alle 1 Sekunde neu zu verbinden
     const audio = document.getElementById('overlay-audio');
-    let oldAudioUrl = '';
-  
-    ws.onopen = () => {
-      console.log('Verbindung zum Backend hergestellt.');
-    };
-  
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-  
-      // Bei Sourcewechsel neu laden
-      if (data.audio_url !== oldAudioUrl) {
-        oldAudioUrl = data.audio_url;
-        audio.src = data.audio_url;
-        audio.load();
-      }
-  
-      if (data.action === 'play') {
-        // Falls pausiert war oder Audio noch nicht startet, setze die Position und spiele
-        if (audio.paused) {
-          audio.currentTime = data.currentTime;
-          audio.play().catch(err => console.error('Playback-Fehler:', err));
-        } else {
-          // Bei laufender Wiedergabe nur Korrektur, wenn nötig (z. B. Drift > 0.3 s)
-          const drift = Math.abs(audio.currentTime - data.currentTime);
-          if (drift > 0.3) {
-            console.log(`Korrigiere Drift: ${drift.toFixed(2)} Sekunden`);
+    const albumCover = document.getElementById('album-cover');
+    const songNameElem = document.getElementById('song-name');
+    const singerNameElem = document.getElementById('singer-name');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+
+    function connect() {
+      ws = new WebSocket('ws://192.168.2.153:8080');
+
+      ws.onopen = () => {
+        console.log('Verbindung zum Backend hergestellt.');
+        updateStatus(true);
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        // Aktualisiere die Metadaten, falls sich die Quelle ändert
+        if (data.audio_url && data.audio_url !== audio.src) {
+          audio.src = data.audio_url;
+          audio.load();
+        }
+        if (data.image_url) {
+          albumCover.src = data.image_url;
+          albumCover.style.display = 'block';
+        }
+        if (data.song_name) {
+          songNameElem.textContent = data.song_name;
+        }
+        if (data.singer_name) {
+          singerNameElem.textContent = data.singer_name;
+        }
+
+        // Reagiere auf die verschiedenen Aktionen
+        if (data.action === 'play') {
+          if (audio.paused) {
             audio.currentTime = data.currentTime;
+            audio.play().catch(err => console.error('Playback-Fehler:', err));
+          } else {
+            // Korrigiere nur, wenn die Abweichung signifikant ist (z. B. > 0.3 Sekunden)
+            const drift = Math.abs(audio.currentTime - data.currentTime);
+            if (drift > 0.5) {
+              console.log(`Korrigiere Drift: ${drift.toFixed(2)} Sekunden`);
+              audio.currentTime = data.currentTime;
+            }
           }
-        }
-      } else if (data.action === 'pause') {
-        // Bei Pause einfach pausieren und ggf. die Position setzen
-        if (!audio.paused) {
-          audio.currentTime = data.pausedAt;
+        } else if (data.action === 'pause') {
+          if (!audio.paused) {
+            audio.currentTime = data.pausedAt;
+            audio.pause();
+          }
+        } else if (data.action === 'stop') {
           audio.pause();
+          audio.currentTime = 0;
+          // Optional: Leere die angezeigten Metadaten
+          albumCover.style.display = 'none';
+          songNameElem.textContent = '-';
+          singerNameElem.textContent = '-';
         }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket Fehler:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket-Verbindung geschlossen. Versuche neu zu verbinden...');
+        updateStatus(false);
+        // Versuche in reconnectInterval ms neu zu verbinden
+        setTimeout(connect, reconnectInterval);
+      };
+    }
+
+    // Aktualisiert den Statusindikator
+    function updateStatus(connected) {
+      if (connected) {
+        statusDot.style.background = 'green';
+        statusText.textContent = 'Connected';
+      } else {
+        statusDot.style.background = 'red';
+        statusText.textContent = 'Reconnecting...';
       }
-    };
-  
-    ws.onerror = (error) => {
-      console.error('WebSocket Fehler:', error);
-    };
-  
-    ws.onclose = () => {
-      console.log('WebSocket-Verbindung geschlossen.');
-    };
+    }
+
+    // Start initialer Verbindungsaufbau
+    connect();
   </script>
-  
 </body>
 </html>

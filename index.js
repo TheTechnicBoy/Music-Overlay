@@ -1,94 +1,141 @@
-
 const WebSocket = require('ws');
 const express = require('express');
 const path = require('path');
 
-// Starte den WebSocket-Server auf Port 8080
-const port = 8080;
-const wss = new WebSocket.Server({ port: port });
+// WebSocket-Server auf Port 8080
+const wsPort = 8080;
+const wss = new WebSocket.Server({ port: wsPort });
+console.log(`WebSocket-Server läuft auf Port ${wsPort}`);
+
+// Express-Server auf Port 3000
 const app = express();
+app.use(express.json());
+const expressPort = 3000;
 
+// Globale Variablen zur Steuerung der Wiedergabe
+let state = 'stopped';  // Mögliche Werte: 'playing', 'paused', 'stopped'
+let startTime = 0;      // Zeitpunkt (in ms), an dem play/resume gestartet wurde
+let pausedAt = 0;       // Abspielposition in Sekunden, wenn pausiert wurde
+let audioUrl = '';
+let imageUrl = '';
+let songName = '';
+let singerName = '';
 
-
-// Globale Variablen zur Steuerung
-let startTime = 0;      // Zeitpunkt, an dem die Wiedergabe (oder Resumé) gestartet wurde
-let audioUrl = '';      // Aktuelle Audioquelle
-let isPaused = false;   // Status: spielt gerade (false) oder pausiert (true)
-let pausedAt = 0;       // Aktuelle Wiedergabezeit in Sekunden, wenn pausiert
-
-setInterval(() => {
-
+function sendPacket(){
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-          if (!isPaused) {
-            // Berechne die aktuelle Abspielposition (in Sekunden)
+          let message;
+          if (state === 'playing') {
+            // Berechne die aktuelle Abspielposition in Sekunden
             const currentTime = (Date.now() - startTime) / 1000;
-            const message = JSON.stringify({
+            message = {
               action: 'play',
               audio_url: audioUrl,
-              currentTime: currentTime
-            });
-            client.send(message);
-          } else {
-            // Sende den pausierten Status mit der abgespielten Zeit
-            const message = JSON.stringify({
+              currentTime: currentTime,
+              image_url: imageUrl,
+              song_name: songName,
+              singer_name: singerName
+            };
+          } else if (state === 'paused') {
+            message = {
               action: 'pause',
               audio_url: audioUrl,
-              pausedAt: pausedAt
-            });
-            client.send(message);
+              pausedAt: pausedAt,
+              image_url: imageUrl,
+              song_name: songName,
+              singer_name: singerName
+            };
+          } else if (state === 'stopped') {
+            message = {
+              action: 'stop',
+              audio_url: audioUrl,
+              image_url: imageUrl,
+              song_name: songName,
+              singer_name: singerName
+            };
           }
+          client.send(JSON.stringify(message));
         }
       });
-
+}
+setInterval(() => {
+    sendPacket();
 }, 100);
 
-
-function playAudio(url){
-    startTime = Date.now();
-    audioUrl = url;
-    //audioUrl = 'http://127.0.0.1:3000/CL5.mp3';
+// Funktion, um ein neues Audio zu starten
+function playAudio(url, imgUrl, song, singer) {
+  audioUrl = url;
+  imageUrl = imgUrl;
+  songName = song;
+  singerName = singer;
+  startTime = Date.now();
+  state = 'playing';
+  pausedAt = 0;
 }
 
 
-// Serve .mp3 files from the current directory
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+
 app.get('/:filename.mp3', (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(__dirname, `${filename}.mp3`);
-    res.sendFile(filePath);
+  const filename = req.params.filename;
+  const filePath = path.join(__dirname, `${filename}.mp3`);
+  res.sendFile(filePath);
+});
+app.get('/ttb.png', (req, res) => {
+    res.sendFile(path.join(__dirname, 'ttb.png'));
 });
 
-app.get('/play/:filename.mp3', (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(__dirname, `${filename}.mp3`);
-    const url = 'http://127.0.0.1:3000/' + filename + '.mp3';
-    playAudio(url);
-    res.send('Playing ' + url);
+app.post('/play', (req, res) => {
+    const { filename, img, song, singer } = req.body;
+    if (!filename) {
+        return res.status(400).send('Filename is required.');
+    }
+    const url = `http://192.168.2.153:3000/${filename}.mp3`;
+    const imgUrl = img || '';
+    const songName = song || 'Unbekannter Song';
+    const singerName = singer || 'Unbekannter Sänger';
+    playAudio(url, imgUrl, songName, singerName);
+    res.send(`Playing ${url}<br>Song: ${songName} - ${singerName}`);
+    sendPacket();	
 });
 
 
-app.get('/pause', (req, res) => {
-    if (!isPaused && startTime !== 0) {
-      // Berechne, wie viele Sekunden bereits abgespielt wurden
-      pausedAt = (Date.now() - startTime) / 1000;
-      isPaused = true;
-      res.send(`Audio paused at ${pausedAt.toFixed(2)} seconds.`);
-    } else {
-      res.send('Audio is already paused or not started yet.');
-    }
-  });
+app.post('/pause', (req, res) => {
+  if (state === 'playing') {
+    pausedAt = (Date.now() - startTime) / 1000;
+    state = 'paused';
+    res.send(`Audio paused at ${pausedAt.toFixed(2)} seconds.`);
+  } else {
+    res.send('Audio is not playing.');
+  }
+  sendPacket();
+});
 
-  app.get('/resume', (req, res) => {
-    if (isPaused) {
-      // Aktualisiere den Startzeitpunkt so, dass die Wiedergabe an der richtigen Stelle fortgesetzt wird
-      startTime = Date.now() - pausedAt * 1000;
-      isPaused = false;
-      res.send('Resuming audio.');
-    } else {
-      res.send('Audio is not paused.');
-    }
-  });
 
-app.listen(3000, () => {
-    console.log(`Express server is running on http://localhost:3000`);
+app.post('/resume', (req, res) => {
+  if (state === 'paused') {
+    startTime = Date.now() - pausedAt * 1000;
+    state = 'playing';
+    res.send('Resuming audio.');
+  } else {
+    res.send('Audio is not paused.');
+  }
+  sendPacket();
+});
+
+
+app.post('/stop', (req, res) => {
+  state = 'stopped';
+  pausedAt = 0;
+  audioUrl = '';
+  res.send('Audio stopped.');
+  sendPacket();
+});
+
+
+app.listen(expressPort, () => {
+  console.log(`Express server is running on http://192.168.2.153:${expressPort}`);
 });
