@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>OBS Music Overlay</title>
+  <style>
+    /* Transparenter Hintergrund für OBS */
+    body {
+      margin: 0;
+      background: transparent;
+    }
+  </style>
+</head>
+<body>
+  <!-- Das Audio-Element wird im Hintergrund verwendet -->
+  <audio id="overlay-audio" preload="auto"></audio>
+
+  <script>
+    const ws = new WebSocket('ws://localhost:8080');
+    const audio = document.getElementById('overlay-audio');
+    let oldAudioUrl = '';
+  
+    ws.onopen = () => {
+      console.log('Verbindung zum Backend hergestellt.');
+    };
+  
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+  
+      // Bei Sourcewechsel neu laden
+      if (data.audio_url !== oldAudioUrl) {
+        oldAudioUrl = data.audio_url;
+        audio.src = data.audio_url;
+        audio.load();
+      }
+  
+      if (data.action === 'play') {
+        // Falls pausiert war oder Audio noch nicht startet, setze die Position und spiele
+        if (audio.paused) {
+          audio.currentTime = data.currentTime;
+          audio.play().catch(err => console.error('Playback-Fehler:', err));
+        } else {
+          // Bei laufender Wiedergabe nur Korrektur, wenn nötig (z. B. Drift > 0.3 s)
+          const drift = Math.abs(audio.currentTime - data.currentTime);
+          if (drift > 0.3) {
+            console.log(`Korrigiere Drift: ${drift.toFixed(2)} Sekunden`);
+            audio.currentTime = data.currentTime;
+          }
+        }
+      } else if (data.action === 'pause') {
+        // Bei Pause einfach pausieren und ggf. die Position setzen
+        if (!audio.paused) {
+          audio.currentTime = data.pausedAt;
+          audio.pause();
+        }
+      }
+    };
+  
+    ws.onerror = (error) => {
+      console.error('WebSocket Fehler:', error);
+    };
+  
+    ws.onclose = () => {
+      console.log('WebSocket-Verbindung geschlossen.');
+    };
+  </script>
+  
+</body>
+</html>
