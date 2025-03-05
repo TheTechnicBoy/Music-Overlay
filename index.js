@@ -7,6 +7,9 @@ const wsPort = 8080;
 const wss = new WebSocket.Server({ port: wsPort });
 console.log(`WebSocket-Server läuft auf Port ${wsPort}`);
 
+// This input has no functionallity, only for console output
+const ip = "192.168.2.153";
+
 // Express-Server auf Port 3000
 const app = express();
 app.use(express.json());
@@ -89,17 +92,18 @@ app.get('/ttb.png', (req, res) => {
 });
 
 app.post('/play', (req, res) => {
-    const { filename, img, song, singer } = req.body;
-    if (!filename) {
-        return res.status(400).send('Filename is required.');
+    const { file, img, song, singer } = req.body;
+    if (!file) {
+        return res.status(400).send('file is required.');
     }
-    const url = `http://192.168.2.153:3000/${filename}.mp3`;
+    const url = file;
     const imgUrl = img || '';
     const songName = song || 'Unbekannter Song';
     const singerName = singer || 'Unbekannter Sänger';
     playAudio(url, imgUrl, songName, singerName);
     res.send(`Playing ${url}<br>Song: ${songName} - ${singerName}`);
     sendPacket();	
+
 });
 
 
@@ -137,5 +141,5 @@ app.post('/stop', (req, res) => {
 
 
 app.listen(expressPort, () => {
-  console.log(`Express server is running on http://192.168.2.153:${expressPort}`);
+  console.log(`Express server is running on http://${ip}:${expressPort}`);
 });

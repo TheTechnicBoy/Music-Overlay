@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="de">
+
 <head>
   <meta charset="UTF-8">
   <title>OBS Music Overlay</title>
   <style>
-    html, body {
+    html,
+    body {
       margin: 0;
       padding: 0;
       background: transparent;
@@ -12,6 +14,7 @@
       font-family: sans-serif;
       color: white;
     }
+
     /* Container für Song-Infos oben links */
     #info {
       position: absolute;
@@ -24,11 +27,13 @@
       border-radius: 5px;
       transition: transform 0.5s ease, opacity 0.5s ease;
     }
+
     /* Ausgeblendete Info-Box (nach oben verschoben und transparent) */
     #info.hidden {
       transform: translateY(-100%);
       opacity: 0;
     }
+
     #info img {
       width: 60px;
       height: 60px;
@@ -38,21 +43,31 @@
       animation: spin 5s linear infinite;
       animation-play-state: running;
     }
+
     /* Pause-Zustand für das Icon */
     #info img.paused {
       animation-play-state: paused;
     }
+
     @keyframes spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
     }
+
     #info .text {
       display: flex;
       flex-direction: column;
     }
+
     #info .text span {
       line-height: 1.2;
     }
+
     /* Container für den Verbindungsstatus unten rechts */
     #status {
       position: absolute;
@@ -65,18 +80,21 @@
       border-radius: 5px;
       font-size: 0.9em;
     }
+
     #status .dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
       margin-right: 5px;
-      background: red; /* Standard: rot, d.h. nicht verbunden */
+      background: blue;
+      /* Standard: blau, d.h. auf "Waiting" */
     }
   </style>
 </head>
+
 <body>
   <!-- Container für die Songinformationen -->
-  <div id="info">
+  <div id="info" class="hidden">
     <img id="album-cover" src="" alt="Album Cover">
     <div class="text">
       <span id="song-name">-</span>
@@ -90,10 +108,14 @@
   <!-- Verbindungsstatus unten rechts -->
   <div id="status">
     <div class="dot" id="status-dot"></div>
-    <span id="status-text">Reconnecting...</span>
+    <span id="status-text">Waiting...</span>
   </div>
 
   <script>
+
+    //Only for WS connection
+    const ip = "192.168.2.153";
+
     let ws;
     let reconnectInterval = 1000; // Versuche alle 1 Sekunde neu zu verbinden
     const audio = document.getElementById('overlay-audio');
@@ -104,8 +126,9 @@
     const statusText = document.getElementById('status-text');
     const infoBox = document.getElementById('info');
 
+    // Funktion, um den WebSocket zu verbinden
     function connect() {
-      ws = new WebSocket('ws://192.168.2.153:8080');
+      ws = new WebSocket(`ws://${ip}:8080`);
 
       ws.onopen = () => {
         console.log('Verbindung zum Backend hergestellt.');
@@ -132,21 +155,26 @@
 
         // Reagiere auf die verschiedenen Aktionen
         if (data.action === 'play') {
-          // Info-Box wieder einblenden und Animation fortsetzen
-          infoBox.classList.remove('hidden');
-          albumCover.classList.remove('paused');
+          if (data.currentTime >= audio.duration) {
+            audio.pause();
+            albumCover.classList.add('paused'); // Pausiere das Rotations-Icon
+          }
+          else {
+            infoBox.classList.remove('hidden');
+            albumCover.classList.remove('paused');
 
-          if (audio.paused) {
-            audio.currentTime = data.currentTime;
-            audio.play().catch(err => console.error('Playback-Fehler:', err));
-          } else {
-            // Korrigiere nur, wenn die Abweichung signifikant ist (z. B. > 0.5 Sekunden)
-            const drift = Math.abs(audio.currentTime - data.currentTime);
-            if (drift > 0.5) {
-              console.log(`Korrigiere Drift: ${drift.toFixed(2)} Sekunden`);
+            if (audio.paused) {
               audio.currentTime = data.currentTime;
+              audio.play().catch(err => console.error('Playback-Fehler:', err));
+            } else {
+              const drift = Math.abs(audio.currentTime - data.currentTime);
+              if (drift > 0.25) {
+                console.log(`Korrigiere Drift: ${drift.toFixed(2)} Sekunden`);
+                audio.currentTime = data.currentTime;
+              }
             }
           }
+
         } else if (data.action === 'pause') {
           if (!audio.paused) {
             audio.currentTime = data.pausedAt;
@@ -188,8 +216,23 @@
       }
     }
 
-    // Start initialer Verbindungsaufbau
-    connect();
+    // Warten auf Benutzerinteraktion (Klick auf die Seite)
+    window.addEventListener('click', () => {
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        console.log('Starte Verbindung...');
+        updateStatus(false); // Zeige "Waiting" an
+        connect();
+      }
+    });
+    window.addEventListener('touchstart', () => {
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        console.log('Starte Verbindung...');
+        updateStatus(false); // Zeige "Waiting" an
+        connect();
+      }
+    });
+    console.log('Warte auf Benutzerinteraktion...');
   </script>
 </body>
+
 </html>
